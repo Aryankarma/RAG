@@ -7,18 +7,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = FastAPI() 
+frontend_url = os.getenv("FRONTEND_PRODUCTION_URL") or "https://your-default.com"
+print("CORS frontend URL:", frontend_url)
 
-# Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Next.js default dev server
-        "http://127.0.0.1:3000",  # Alternative localhost
-        os.getenv("FRONTEND_PRODUCTION_URL"),
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        frontend_url
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(rag.router, prefix="/rag")
