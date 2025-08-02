@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Send, Paperclip, FileText, Bot, User, Loader2, Sun, Moon } from "lucide-react"
 import { useTheme } from "@/components/theme-provider"
+import axiosInstance from "@/lib/axios"
 
 interface Message {
   id: string
@@ -59,6 +60,7 @@ export default function ChatInterface() {
     setMessages((prev) => [...prev, newMessage])
   }
 
+
   const handleFileUpload = async (file: File) => {
     if (!file || file.type !== "application/pdf") {
       addMessage("system", "Please select a valid PDF file.")
@@ -72,26 +74,24 @@ export default function ChatInterface() {
       const formData = new FormData()
       formData.append("file", file)
 
-      const response = await fetch("http://localhost:8000/rag/upload", {
-        method: "POST",
-        body: formData,
+      const response = await axiosInstance.post<UploadResponse>("/rag/upload", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
       })
 
-      if (!response.ok) {
-        throw new Error("Upload failed")
-      }
-
-      const result: UploadResponse = await response.json()
       addMessage(
         "bot",
         `✅ Document "${file.name}" has been uploaded and processed successfully! You can now ask questions about its content.`,
       )
     } catch (error) {
+      console.error(error)
       addMessage("bot", "❌ Failed to upload document. Please try again.")
     } finally {
       setIsUploading(false)
     }
   }
+
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -106,34 +106,31 @@ export default function ChatInterface() {
 
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return
-
+  
     const userMessage = input.trim()
     setInput("")
     addMessage("user", userMessage)
     setIsLoading(true)
-
+  
     try {
       const formData = new FormData()
       formData.append("query", userMessage)
-
-      const response = await fetch("http://localhost:8000/rag/query", {
-        method: "POST",
-        body: formData,
+  
+      const response = await axiosInstance.post<QueryResponse>("/rag/query", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
       })
-
-      if (!response.ok) {
-        throw new Error("Query failed")
-      }
-
-      const result: QueryResponse = await response.json()
-      addMessage("bot", result.answer)
+  
+      addMessage("bot", response.data.answer)
     } catch (error) {
+      console.error(error)
       addMessage("bot", "Sorry, I encountered an error processing your question. Please try again.")
     } finally {
       setIsLoading(false)
     }
   }
-
+  
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
@@ -145,9 +142,8 @@ export default function ChatInterface() {
     <div className={`flex flex-col h-screen ${theme === "dark" ? "bg-[#151515]" : "bg-gray-50"}`}>
       {/* Header */}
       <div
-        className={`border-b px-6 py-4 ${
-          theme === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-white border-gray-200"
-        }`}
+        className={`border-b px-6 py-4 ${theme === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-white border-gray-200"
+          }`}
       >
         <div className="flex items-center justify-between">
           <div>
@@ -164,11 +160,10 @@ export default function ChatInterface() {
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
-            className={`${
-              theme === "dark"
+            className={`${theme === "dark"
                 ? "text-gray-300 hover:text-white hover:bg-gray-700"
                 : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-            }`}
+              }`}
           >
             {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </Button>
@@ -183,13 +178,12 @@ export default function ChatInterface() {
               <div className={`flex max-w-[80%] gap-3 ${message.type === "user" ? "flex-row-reverse" : "flex-row"}`}>
                 {/* Avatar */}
                 <div
-                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                    message.type === "user"
+                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${message.type === "user"
                       ? "bg-blue-500"
                       : message.type === "bot"
                         ? (theme === "dark" ? "bg-gray-600" : "bg-gray-700")
                         : "bg-green-500"
-                  }`}
+                    }`}
                 >
                   {message.type === "user" ? (
                     <User className="w-4 h-4 text-white" />
@@ -202,31 +196,29 @@ export default function ChatInterface() {
 
                 {/* Message Content */}
                 <div
-                  className={`rounded-lg px-4 py-2 ${
-                    message.type === "user"
+                  className={`rounded-lg px-4 py-2 ${message.type === "user"
                       ? "bg-blue-500 text-white"
                       : message.type === "bot"
                         ? (
-                            theme === "dark"
-                              ? "bg-[#2a2a2a] border border-gray-600 text-gray-100"
-                              : "bg-white border border-gray-200 text-gray-900 shadow-sm"
-                          )
+                          theme === "dark"
+                            ? "bg-[#2a2a2a] border border-gray-600 text-gray-100"
+                            : "bg-white border border-gray-200 text-gray-900 shadow-sm"
+                        )
                         : (
-                            theme === "dark"
-                              ? "bg-green-900/30 border border-green-700 text-green-200"
-                              : "bg-green-50 border border-green-200 text-green-800"
-                          )
-                  }`}
+                          theme === "dark"
+                            ? "bg-green-900/30 border border-green-700 text-green-200"
+                            : "bg-green-50 border border-green-200 text-green-800"
+                        )
+                    }`}
                 >
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                   <p
-                    className={`text-xs mt-1 ${
-                      message.type === "user"
+                    className={`text-xs mt-1 ${message.type === "user"
                         ? "text-blue-100"
                         : message.type === "bot"
                           ? (theme === "dark" ? "text-gray-400" : "text-gray-500")
                           : (theme === "dark" ? "text-green-300" : "text-green-600")
-                    }`}
+                      }`}
                   >
                     {message.timestamp.toLocaleTimeString()}
                   </p>
@@ -240,18 +232,16 @@ export default function ChatInterface() {
             <div className="flex justify-start">
               <div className="flex gap-3">
                 <div
-                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                    theme === "dark" ? "bg-gray-600" : "bg-gray-700"
-                  }`}
+                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${theme === "dark" ? "bg-gray-600" : "bg-gray-700"
+                    }`}
                 >
                   <Bot className="w-4 h-4 text-white" />
                 </div>
                 <div
-                  className={`rounded-lg px-4 py-2 ${
-                    theme === "dark"
+                  className={`rounded-lg px-4 py-2 ${theme === "dark"
                       ? "bg-[#2a2a2a] border border-gray-600"
                       : "bg-white border border-gray-200 shadow-sm"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -270,9 +260,8 @@ export default function ChatInterface() {
 
       {/* Input Area */}
       <div
-        className={`border-t px-4 py-4 ${
-          theme === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-white border-gray-200"
-        }`}
+        className={`border-t px-4 py-4 ${theme === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-white border-gray-200"
+          }`}
       >
         <div className="max-w-4xl mx-auto">
           <div className="flex items-end gap-2">
@@ -282,11 +271,10 @@ export default function ChatInterface() {
               size="icon"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
-              className={`flex-shrink-0 ${
-                theme === "dark"
+              className={`flex-shrink-0 ${theme === "dark"
                   ? "border-gray-600 bg-[#2a2a2a] text-gray-300 hover:bg-gray-700 hover:text-white"
                   : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
-              }`}
+                }`}
             >
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
             </Button>
@@ -299,11 +287,10 @@ export default function ChatInterface() {
                 onKeyPress={handleKeyPress}
                 placeholder="Ask a question about your documents..."
                 disabled={isLoading}
-                className={`resize-none ${
-                  theme === "dark"
+                className={`resize-none ${theme === "dark"
                     ? "border-gray-600 bg-[#2a2a2a] text-gray-100 placeholder:text-gray-400 focus:border-gray-500"
                     : "border-gray-300 bg-white text-gray-900 placeholder:text-gray-500"
-                }`}
+                  }`}
               />
             </div>
 
