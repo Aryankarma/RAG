@@ -62,6 +62,6 @@ FRONTEND_PRODUCTION_URL=https://rag-chi-two.vercel.app
 
 # Frontend ENV
 
-NEXT_PUBLIC_BACKEND_URL=https://rag-t2v5.onrender.com
+NEXT_PUBLIC_BACKEND_URL=https://rag-jm1s.onrender.com
 
 NODE_ENV=dev
