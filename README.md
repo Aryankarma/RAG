@@ -1,5 +1,5 @@
 
-# LLM Document Processing System
+# Problem Statement - LLM Document Processing System
 
 Build a system that uses Large Language Models (LLMs) to process natural language queries and retrieve relevant information from large unstructured documents such as policy documents, contracts, and emails.
 
@@ -51,12 +51,17 @@ This system can be applied in domains such as insurance, legal compliance, human
 # Backend ENV
 
 COHERE_API_KEY=O8XzMdRVSKka3zuce02Aq0ExL8I3QTnQyf5tqIl8
+
 PINECONE_API_KEY=pcsk_6sPcNf_9jvVLY8ZHS8fUSnw2ddqXNt6o3dbAbyjRtEn1jkarshbiz8Hm1K4W1iyBbrmEB2
+
 PINECONE_ENV=us-east-1
+
 PINECONE_INDEX=rag-index-type1
+
 FRONTEND_PRODUCTION_URL=https://rag-chi-two.vercel.app
 
 # Frontend ENV
 
 NEXT_PUBLIC_BACKEND_URL=https://rag-t2v5.onrender.com
+
 NODE_ENV=dev
