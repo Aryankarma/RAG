@@ -47,9 +47,21 @@ This system can be applied in domains such as insurance, legal compliance, human
 
 "Yes, knee surgery is covered under the policy."
 
+# Backend ENV EX
 
-# Frontend ENV
+COHERE_API_KEY=
 
-NEXT_PUBLIC_BACKEND_URL=https://rag-jm1s.onrender.com
+PINECONE_API_KEY=
 
-NODE_ENV=dev
+PINECONE_ENV=
+
+PINECONE_INDEX=
+
+FRONTEND_PRODUCTION_URL=
+
+
+# Frontend ENV EX
+
+NEXT_PUBLIC_BACKEND_URL=
+
+NODE_ENV=
