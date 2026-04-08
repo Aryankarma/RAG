@@ -1,8 +1,17 @@
 from pinecone import Pinecone
 import cohere
 import re
+import time
+import uuid
 from typing import List, Dict, Any
-from app.config import COHERE_API_KEY, PINECONE_API_KEY, PINECONE_INDEX
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from app.config import (
+    COHERE_API_KEY,
+    PINECONE_API_KEY,
+    PINECONE_INDEX,
+    PINECONE_NAMESPACE_CHUNKS,
+    PINECONE_NAMESPACE_DOCS,
+)
 
 co = cohere.Client(COHERE_API_KEY)
 
@@ -154,8 +163,6 @@ def create_enhanced_chunks(text: str, chunk_size: int = 800, overlap: int = 100)
     """Create enhanced chunks with metadata (compatible with existing splitter)"""
     processor = PolicyDocumentProcessor()
     
-    # Use similar chunking logic as the original splitter
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
     basic_chunks = splitter.split_text(text)
     
@@ -179,8 +186,11 @@ def create_enhanced_chunks(text: str, chunk_size: int = 800, overlap: int = 100)
     
     return enhanced_chunks
 
-async def enhanced_embed_and_store(chunks):
+async def enhanced_embed_and_store(chunks, *, doc_id: str | None = None, filename: str | None = None):
     """Enhanced embedding with structured metadata"""
+    doc_id = doc_id or str(uuid.uuid4())
+    filename = filename or "uploaded.pdf"
+    uploaded_at = int(time.time())
     
     # If chunks is a list of strings (from original splitter), enhance them
     if chunks and isinstance(chunks[0], str):
@@ -204,9 +214,14 @@ async def enhanced_embed_and_store(chunks):
     vectors_to_upsert = []
     
     for i, (chunk_data, vector) in enumerate(zip(chunks_data, responses.embeddings)):
+        chunk_vector_id = f"{doc_id}:chunk:{i}"
         if isinstance(chunk_data, dict):
             # Enhanced chunk with metadata
             metadata = {
+                "doc_id": doc_id,
+                "filename": filename,
+                "uploaded_at": uploaded_at,
+                "record_type": "chunk",
                 'text': chunk_data['text'],
                 'section_types': chunk_data['section_types'],
                 'length': chunk_data['length']
@@ -232,28 +247,58 @@ async def enhanced_embed_and_store(chunks):
                 metadata['has_time_periods'] = True
             
             vectors_to_upsert.append((
-                chunk_data['id'],
+                chunk_vector_id,
                 vector,
                 metadata
             ))
         else:
             # Original chunk format (backward compatibility)
             vectors_to_upsert.append((
-                f"chunk-{i}",
+                chunk_vector_id,
                 vector,
-                {"text": chunk_data}
+                {
+                    "doc_id": doc_id,
+                    "filename": filename,
+                    "uploaded_at": uploaded_at,
+                    "record_type": "chunk",
+                    "text": chunk_data,
+                }
             ))
     
     # Upsert to Pinecone in batches
     batch_size = 100
     for i in range(0, len(vectors_to_upsert), batch_size):
         batch = vectors_to_upsert[i:i + batch_size]
-        index.upsert(batch)
+        index.upsert(batch, namespace=PINECONE_NAMESPACE_CHUNKS)
+    
+    # Upsert a small manifest record into a separate namespace for listing documents.
+    # This avoids having to scan all chunk vectors to build the sidebar.
+    manifest_embed = co.embed(
+        texts=[f"{filename}\n{doc_id}"],
+        model="embed-english-v3.0",
+        input_type="search_document",
+    )
+    index.upsert(
+        [
+            (
+                f"doc:{doc_id}",
+                manifest_embed.embeddings[0],
+                {
+                    "doc_id": doc_id,
+                    "filename": filename,
+                    "uploaded_at": uploaded_at,
+                    "chunk_count": len(vectors_to_upsert),
+                    "record_type": "manifest",
+                },
+            )
+        ],
+        namespace=PINECONE_NAMESPACE_DOCS,
+    )
     
     print(f"Successfully embedded and stored {len(vectors_to_upsert)} chunks")
-    return len(vectors_to_upsert)
+    return {"doc_id": doc_id, "filename": filename, "chunk_count": len(vectors_to_upsert)}
 
 # Backward compatibility function - this is what your existing code calls
-async def embed_and_store(chunks):
+async def embed_and_store(chunks, *, doc_id: str | None = None, filename: str | None = None):
     """Main embed function - enhanced but backward compatible"""
-    return await enhanced_embed_and_store(chunks)
+    return await enhanced_embed_and_store(chunks, doc_id=doc_id, filename=filename)

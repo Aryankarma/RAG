@@ -3,9 +3,8 @@ import cohere
 import json
 import re
 from typing import Dict, Any, List
-from app.config import COHERE_API_KEY, PINECONE_API_KEY, PINECONE_INDEX
-
-print(COHERE_API_KEY, PINECONE_API_KEY, PINECONE_INDEX)
+from app.config import COHERE_API_KEY, PINECONE_API_KEY, PINECONE_INDEX, PINECONE_NAMESPACE_CHUNKS
+from app.utils.cohere_llm import cohere_generate_text
 
 # Initialize clients
 co = cohere.Client(COHERE_API_KEY)
@@ -277,7 +276,8 @@ async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
         result = pinecone_index.query(
             vector=query_vector,
             top_k=3,
-            include_metadata=True
+            include_metadata=True,
+            namespace=PINECONE_NAMESPACE_CHUNKS,
         )
         
         if result.matches:
@@ -307,11 +307,12 @@ async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
     
     # Step 6: Generate detailed explanation using LLM
     prompt = format_enhanced_prompt(context, extracted_data, query)
-    completion = co.generate(
-        prompt=prompt,
-        model="command-r-plus",
+    llm_analysis = cohere_generate_text(
+        co,
+        prompt,
+        model="command-r-plus-08-2024",
         max_tokens=500,
-        temperature=0.1
+        temperature=0.1,
     )
     
     # Step 7: Combine results
@@ -320,7 +321,7 @@ async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
         "amount": decision_result['amount'],
         "justification": decision_result['justification'],
         "clauses_used": decision_result['clauses_used'],
-        "llm_analysis": completion.generations[0].text.strip(),
+        "llm_analysis": llm_analysis,
         "extracted_data": extracted_data,
         "confidence_score": max([match.score for match in relevant_matches]) if relevant_matches else 0
     }
@@ -359,7 +360,8 @@ async def query_knowledge_base(query):
     result = pinecone_index.query(
         vector=query_vector, 
         top_k=5, 
-        include_metadata=True
+        include_metadata=True,
+        namespace=PINECONE_NAMESPACE_CHUNKS,
     )
     
     # Check if we have any results returned at all
@@ -390,11 +392,10 @@ async def query_knowledge_base(query):
     
     # Format prompt and generate response
     prompt = format_prompt(context, query)
-    completion = co.generate(
-        prompt=prompt, 
-        model="command-r-plus", 
+    return cohere_generate_text(
+        co,
+        prompt,
+        model="command-r-plus-08-2024",
         max_tokens=300,
-        temperature=0.1  # Lower temperature for more focused responses
+        temperature=0.1,
     )
-    
-    return completion.generations[0].text.strip()

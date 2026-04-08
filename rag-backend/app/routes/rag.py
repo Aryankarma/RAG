@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 from app.services.document_handler import parse_pdf
 from app.services.embedder import embed_and_store
 from app.services.retriever import query_knowledge_base, enhanced_query_knowledge_base
+from app.services.pinecone_documents import list_documents, delete_document
 
 router = APIRouter()
 
@@ -24,9 +25,9 @@ class InsuranceResponse(BaseModel):
 @router.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     text_chunks = await parse_pdf(file)
-    await embed_and_store(text_chunks)
+    result = await embed_and_store(text_chunks, filename=file.filename)
     print("document embedded successfully")
-    return {"message": "Document embedded successfully"}
+    return {"message": "Document embedded successfully", **result}
 
 @router.get("/upload")
 async def upload_pdf():
@@ -37,6 +38,16 @@ async def ask_question(query: str = Form(...)):
     result = await query_knowledge_base(query)
     print("result of query: ", result)
     return {"answer": result}
+
+# Documents sidebar endpoints
+@router.get("/documents")
+async def get_documents():
+    return {"documents": list_documents()}
+
+@router.delete("/documents/{doc_id}")
+async def delete_uploaded_document(doc_id: str):
+    deleted = delete_document(doc_id)
+    return {"doc_id": doc_id, **deleted}
 
 
 
