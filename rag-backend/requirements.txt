@@ -6,3 +6,4 @@ PyMuPDF>=1.24.0
 langchain-text-splitters>=0.3.0
 cohere>=5.0.0,<6
 python-multipart>=0.0.9
+email-validator>=2.0.0

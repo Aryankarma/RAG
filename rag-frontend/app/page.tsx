@@ -4,25 +4,35 @@ import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Send, Paperclip, FileText, Bot, User, Loader2, Sun, Moon, Trash2, RefreshCcw } from "lucide-react"
 import { useTheme } from "@/components/theme-provider"
 import axiosInstance from "@/lib/axios"
 
+type AgentStep = {
+  tool: string
+  arguments: Record<string, unknown>
+  result_summary: string
+}
+
 interface Message {
   id: string
   type: "user" | "bot" | "system"
   content: string
   timestamp: Date
+  steps?: AgentStep[]
 }
 
 interface UploadResponse {
   message: string
 }
 
-interface QueryResponse {
+interface ChatApiResponse {
   answer: string
+  steps?: AgentStep[]
+  parse_error?: boolean
 }
 
 type UploadedDoc = {
@@ -148,21 +158,47 @@ export default function ChatInterface() {
     if (!input.trim() || isLoading) return
   
     const userMessage = input.trim()
+    const historyPayload = messages
+      .filter((m) => m.type === "user" || m.type === "bot")
+      .map((m) => ({
+        role: m.type === "user" ? ("user" as const) : ("assistant" as const),
+        content: m.content,
+      }))
+
     setInput("")
     addMessage("user", userMessage)
     setIsLoading(true)
   
     try {
-      const formData = new FormData()
-      formData.append("query", userMessage)
-  
-      const response = await axiosInstance.post<QueryResponse>("/rag/query", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
+      const response = await axiosInstance.post<ChatApiResponse>(
+        "/rag/chat",
+        {
+          message: userMessage,
+          history: historyPayload,
         },
-      })
-  
-      addMessage("bot", response.data.answer)
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      )
+
+      const steps = response.data.steps?.length ? response.data.steps : undefined
+      const answer =
+        response.data.parse_error && !response.data.answer
+          ? "The assistant returned an unexpected response. Please try again."
+          : response.data.answer
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          type: "bot",
+          content: answer,
+          timestamp: new Date(),
+          steps,
+        },
+      ])
     } catch (error) {
       console.error(error)
       addMessage("bot", "Sorry, I encountered an error processing your question. Please try again.")
@@ -348,6 +384,30 @@ export default function ChatInterface() {
                     }`}
                 >
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                  {message.type === "bot" && message.steps && message.steps.length > 0 ? (
+                    <Collapsible className="mt-2 text-left">
+                      <CollapsibleTrigger
+                        className={`text-xs font-medium underline-offset-2 hover:underline ${
+                          theme === "dark" ? "text-gray-400" : "text-gray-600"
+                        }`}
+                      >
+                        What I did ({message.steps.length})
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="mt-2 space-y-2">
+                        {message.steps.map((s, idx) => (
+                          <div
+                            key={`${message.id}-step-${idx}`}
+                            className={`rounded-md px-2 py-1.5 text-xs ${
+                              theme === "dark" ? "bg-black/30 text-gray-300" : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            <div className="font-medium">{s.tool}</div>
+                            <div className="opacity-90 mt-0.5">{s.result_summary}</div>
+                          </div>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  ) : null}
                   <p
                     className={`text-xs mt-1 ${message.type === "user"
                         ? "text-blue-100"

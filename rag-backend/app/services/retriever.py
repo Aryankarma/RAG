@@ -1,10 +1,39 @@
 from pinecone import Pinecone
 import cohere
 import json
+import logging
 import re
-from typing import Dict, Any, List
+from dataclasses import dataclass
+from typing import Dict, Any, List, Optional
 from app.config import COHERE_API_KEY, PINECONE_API_KEY, PINECONE_INDEX, PINECONE_NAMESPACE_CHUNKS
 from app.utils.cohere_llm import cohere_generate_text
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RetrievedChunk:
+    id: str
+    score: float
+    text: str
+    filename: Optional[str] = None
+    doc_id: Optional[str] = None
+
+
+SIMILARITY_THRESHOLD = 0.4
+
+
+def _pinecone_vector_search(query: str, top_k: int = 5):
+    """Raw Pinecone query result (single embed + query)."""
+    embed_resp = co.embed(texts=[query], model="embed-english-v3.0", input_type="search_query")
+    query_vector = embed_resp.embeddings[0]
+    return pinecone_index.query(
+        vector=query_vector,
+        top_k=top_k,
+        include_metadata=True,
+        namespace=PINECONE_NAMESPACE_CHUNKS,
+    )
+
 
 # Initialize clients
 co = cohere.Client(COHERE_API_KEY)
@@ -191,6 +220,83 @@ class InsuranceDecisionEngine:
 parser = QueryParser()
 decision_engine = InsuranceDecisionEngine()
 
+def retrieve_chunks(
+    query: str,
+    *,
+    top_k: int = 5,
+    min_score: float = SIMILARITY_THRESHOLD,
+) -> List[RetrievedChunk]:
+    """
+    Vector search only (no LLM). Used by founder tool-calling and standard RAG.
+    Returns chunks at or above min_score; empty if nothing meets the threshold.
+    """
+    qprev = query.replace("\n", " ").strip()
+    if len(qprev) > 120:
+        qprev = qprev[:119] + "…"
+    logger.info(
+        "[rag] retrieve | phase=embed+pinecone | top_k=%s min_score=%s | query=%s",
+        top_k,
+        min_score,
+        qprev,
+    )
+    result = _pinecone_vector_search(query, top_k=top_k)
+
+    if not result.matches:
+        logger.info("[rag] retrieve | phase=done | status=no matches from index")
+        return []
+
+    out: List[RetrievedChunk] = []
+    for match in result.matches:
+        if match.score < min_score:
+            continue
+        meta = match.metadata or {}
+        text = meta.get("text") or ""
+        if not text:
+            continue
+        out.append(
+            RetrievedChunk(
+                id=str(match.id),
+                score=float(match.score),
+                text=text,
+                filename=meta.get("filename"),
+                doc_id=meta.get("doc_id"),
+            )
+        )
+    best = float(result.matches[0].score) if result.matches else 0.0
+    logger.info(
+        "[rag] retrieve | phase=done | status=ok | chunks=%s | top_score=%.4f",
+        len(out),
+        best,
+    )
+    return out
+
+
+def chunks_to_context(chunks: List[RetrievedChunk]) -> str:
+    return "\n\n".join(c.text for c in chunks)
+
+
+def answer_from_context(context: str, question: str) -> str:
+    """Grounded answer using existing RAG prompt rules."""
+    qprev = question.replace("\n", " ").strip()
+    if len(qprev) > 100:
+        qprev = qprev[:99] + "…"
+    logger.info(
+        "[rag] answer | phase=llm | status=calling Cohere | context_chars=%s | question=%s",
+        len(context),
+        qprev,
+    )
+    prompt = format_prompt(context, question)
+    out = cohere_generate_text(
+        co,
+        prompt,
+        model="command-r-plus-08-2024",
+        max_tokens=300,
+        temperature=0.1,
+    )
+    logger.info("[rag] answer | phase=llm | status=done | answer_chars=%s", len(out or ""))
+    return out
+
+
 def format_prompt(context, question):
     return f"""You are a helpful assistant that ONLY answers questions based on the provided context. 
 
@@ -236,7 +342,8 @@ Answer:"""
 
 async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
     """Enhanced query processing with structured parsing and decision making"""
-    
+    logger.info("[rag] insurance | phase=start | path=enhanced_query_knowledge_base")
+
     # Step 1: Parse query into structured data
     extracted_data = parser.extract_info(query)
     
@@ -306,6 +413,7 @@ async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
     decision_result = decision_engine.evaluate_claim(extracted_data, relevant_clauses)
     
     # Step 6: Generate detailed explanation using LLM
+    logger.info("[rag] insurance | phase=llm | status=calling Cohere (analysis)")
     prompt = format_enhanced_prompt(context, extracted_data, query)
     llm_analysis = cohere_generate_text(
         co,
@@ -314,7 +422,8 @@ async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
         max_tokens=500,
         temperature=0.1,
     )
-    
+    logger.info("[rag] insurance | phase=llm | status=done | analysis_chars=%s", len(llm_analysis or ""))
+
     # Step 7: Combine results
     final_response = {
         "decision": decision_result['decision'],
@@ -331,7 +440,11 @@ async def enhanced_query_knowledge_base(query: str) -> Dict[str, Any]:
 # Original function with enhanced capabilities
 async def query_knowledge_base(query):
     """Enhanced query function that handles both simple and structured queries"""
-    
+    qprev = query.replace("\n", " ").strip()
+    if len(qprev) > 100:
+        qprev = qprev[:99] + "…"
+    logger.info("[rag] query | endpoint=/rag/query | phase=start | query=%s", qprev)
+
     # Check if this looks like a structured insurance query
     insurance_keywords = ['surgery', 'policy', 'month', 'year', 'treatment', 'procedure']
     has_insurance_pattern = any(keyword in query.lower() for keyword in insurance_keywords)
@@ -339,6 +452,7 @@ async def query_knowledge_base(query):
     
     # If it looks like an insurance query, use enhanced processing
     if has_insurance_pattern and has_age_pattern:
+        logger.info("[rag] query | route=insurance-enhanced | status=matched heuristics")
         try:
             result = await enhanced_query_knowledge_base(query)
             
@@ -349,37 +463,28 @@ async def query_knowledge_base(query):
             else:
                 return result.get("message", "Unable to process the insurance query.")
         except Exception as e:
-            print(f"Enhanced processing failed: {e}, falling back to standard processing")
+            logger.exception(
+                "Enhanced insurance processing failed; falling back to standard RAG: %s",
+                e,
+            )
             # Fall back to standard processing if enhanced fails
     
     # Standard RAG processing for non-insurance queries
-    embed_resp = co.embed(texts=[query], model="embed-english-v3.0", input_type="search_query")
-    query_vector = embed_resp.embeddings[0]
-    
-    # Query Pinecone index
-    result = pinecone_index.query(
-        vector=query_vector, 
-        top_k=5, 
-        include_metadata=True,
-        namespace=PINECONE_NAMESPACE_CHUNKS,
-    )
-    
-    # Check if we have any results returned at all
+    logger.info("[rag] query | route=standard-rag | phase=pinecone+llm")
+    result = _pinecone_vector_search(query, top_k=5)
+
     if not result.matches:
         return "No results were returned from the vector store. This likely means that the query didn't match any document embeddings closely enough. Please try rephrasing your question or ensure it's relevant to the uploaded documents."
 
-    # Check if the top result has a low similarity score
-    if result.matches[0].score < 0.4:  # Adjust threshold as needed
+    if result.matches[0].score < SIMILARITY_THRESHOLD:
         return (
-            f"The top match has a similarity score below the acceptable threshold (0.4). "
+            f"The top match has a similarity score below the acceptable threshold ({SIMILARITY_THRESHOLD}). "
             f"This indicates that even the closest document is not semantically similar enough to your query. "
             f"Try asking a more specific question based on the content of your documents. "
             f"(Score: {result.matches[0].score:.4f})"
         )
 
-    # Filter matches by similarity score to ensure relevance
-    relevant_matches = [match for match in result.matches if match.score > 0.4]
-
+    relevant_matches = [m for m in result.matches if m.score >= SIMILARITY_THRESHOLD]
     if not relevant_matches:
         return (
             "Although matches were found, none passed the similarity threshold (> 0.4). "
@@ -387,15 +492,28 @@ async def query_knowledge_base(query):
             "Consider rephrasing or using keywords present in the uploaded documents."
         )
 
-    # Extract context from relevant results only
-    context = "\n\n".join([match.metadata["text"] for match in relevant_matches])
-    
-    # Format prompt and generate response
-    prompt = format_prompt(context, query)
-    return cohere_generate_text(
-        co,
-        prompt,
-        model="command-r-plus-08-2024",
-        max_tokens=300,
-        temperature=0.1,
-    )
+    chunks: List[RetrievedChunk] = []
+    for match in relevant_matches:
+        meta = match.metadata or {}
+        text = meta.get("text") or ""
+        if not text:
+            continue
+        chunks.append(
+            RetrievedChunk(
+                id=str(match.id),
+                score=float(match.score),
+                text=text,
+                filename=meta.get("filename"),
+                doc_id=meta.get("doc_id"),
+            )
+        )
+
+    if not chunks:
+        return (
+            "Although matches were found, none passed the similarity threshold (> 0.4). "
+            "This suggests that the query does not closely align with any document content. "
+            "Consider rephrasing or using keywords present in the uploaded documents."
+        )
+
+    context = chunks_to_context(chunks)
+    return answer_from_context(context, query)

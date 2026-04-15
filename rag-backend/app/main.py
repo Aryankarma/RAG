@@ -1,14 +1,21 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from app.routes import rag
+import logging
 import os
+
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.logging_config import setup_logging
+from app.routes import rag
 
 load_dotenv()
+setup_logging()
 
-app = FastAPI() 
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
 frontend_url = os.getenv("FRONTEND_PRODUCTION_URL") or "https://your-default.com"
-print("CORS frontend URL:", frontend_url)
+logger.info("CORS allowed frontend URL: %s", frontend_url)
 
 app.add_middleware(
     CORSMiddleware,

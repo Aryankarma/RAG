@@ -1,11 +1,16 @@
 # app/routes/rag.py - ENHANCED VERSION
+import logging
+
 from fastapi import APIRouter, UploadFile, File, Form
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
 from app.services.document_handler import parse_pdf
 from app.services.embedder import embed_and_store
 from app.services.retriever import query_knowledge_base, enhanced_query_knowledge_base
 from app.services.pinecone_documents import list_documents, delete_document
+from app.services.agent import run_agent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -22,11 +27,32 @@ class InsuranceResponse(BaseModel):
     confidence_score: float
     llm_analysis: str
 
+
+class ChatHistoryItem(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    history: List[ChatHistoryItem] = Field(default_factory=list)
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+    parse_error: Optional[bool] = None
+
 @router.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
+    logger.info("[api] POST /rag/upload | phase=start | filename=%s", file.filename)
     text_chunks = await parse_pdf(file)
     result = await embed_and_store(text_chunks, filename=file.filename)
-    print("document embedded successfully")
+    logger.info(
+        "[api] POST /rag/upload | phase=done | doc_id=%s chunks=%s",
+        result.get("doc_id"),
+        result.get("chunk_count"),
+    )
     return {"message": "Document embedded successfully", **result}
 
 @router.get("/upload")
@@ -35,9 +61,39 @@ async def upload_pdf():
 
 @router.post("/query")
 async def ask_question(query: str = Form(...)):
+    logger.info("[api] POST /rag/query | phase=start | legacy form query")
     result = await query_knowledge_base(query)
-    print("result of query: ", result)
+    logger.info(
+        "[api] POST /rag/query | phase=done | answer_chars=%s",
+        len(result) if isinstance(result, str) else 0,
+    )
     return {"answer": result}
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat_with_tools(request: ChatRequest):
+    """
+    Founder chat with JSON tool calling (search company KB, send email).
+    Does not use the insurance auto-route in query_knowledge_base.
+    """
+    logger.info(
+        "[api] POST /rag/chat | phase=start | history=%s | message=%s",
+        len(request.history),
+        request.message.replace("\n", " ").strip()[:120],
+    )
+    hist = [{"role": h.role, "content": h.content} for h in request.history]
+    out = run_agent(request.message.strip(), hist)
+    logger.info(
+        "[api] POST /rag/chat | phase=done | steps=%s | parse_error=%s | answer_chars=%s",
+        len(out.get("steps") or []),
+        out.get("parse_error"),
+        len((out.get("answer") or "")),
+    )
+    return ChatResponse(
+        answer=out.get("answer", ""),
+        steps=out.get("steps") or [],
+        parse_error=out.get("parse_error"),
+    )
 
 # Documents sidebar endpoints
 @router.get("/documents")
