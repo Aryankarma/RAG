@@ -47,6 +47,17 @@ That means the **server name** in `SMTP_HOST` could not be resolved (not a bad â
 
 Do not leave `SMTP_HOST` as a placeholder like `smtp.example.com`.
 
+### Deploy (Railway)
+
+- Set the Railway **Root Directory** to `rag-backend`
+- Start command:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+- Python version: this repo includes `rag-backend/runtime.txt` (pins Python to 3.12). If Railway still uses a different Python, set Railway env `NIXPACKS_PYTHON_VERSION=3.12`.
+
 ### Endpoints
 - `POST /rag/upload` - Upload PDF
 - `POST /rag/query` - Ask question (form field: `query`; legacy path, may use insurance heuristics)
